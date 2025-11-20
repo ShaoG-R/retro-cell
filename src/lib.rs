@@ -3,8 +3,9 @@ use std::collections::VecDeque;
 use std::mem::align_of;
 use std::ops::Deref;
 use std::ptr::{self};
-use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering, AtomicU32};
+use std::sync::Arc;
+use atomic_wait::{wait, wake_all};
 
 // === Constants ===
 // Low bit used for state tagging
@@ -39,8 +40,7 @@ struct SharedState<T> {
     /// Previous Epoch (Snapshot), no Tag
     previous: AtomicPtr<Node<T>>,
 
-    notifier_lock: Mutex<usize>,
-    notifier_cond: Condvar,
+    writer_notify: AtomicU32,
 }
 
 unsafe impl<T: Send + Sync> Send for SharedState<T> {}
@@ -89,26 +89,34 @@ pub struct BlockedReader<'a, T> {
 impl<'a, T> BlockedReader<'a, T> {
     /// Wait for the writer to finish and retry reading
     pub fn wait(self) -> ReadResult<'a, T> {
-        let mut guard = self.shared.notifier_lock.lock().unwrap();
         loop {
+            // 1. Check current value first
             let mut val = self.shared.current.load(Ordering::Acquire);
-            if (val & TAG_MASK) != 0 {
-                guard = self.shared.notifier_cond.wait(guard).unwrap();
-                val = *guard;
-            }
-
             if (val & TAG_MASK) == 0 {
-                drop(guard);
+                // Unlocked, try to acquire
                 let ptr = (val & PTR_MASK) as *mut Node<T>;
                 let node = unsafe { &*ptr };
                 node.reader_count.fetch_add(REF_ONE, Ordering::Acquire);
 
+                // Double check
                 if self.shared.current.load(Ordering::Acquire) == val {
                     return ReadResult::Success(Ref { node });
                 }
                 node.reader_count.fetch_sub(REF_ONE, Ordering::Release);
-                guard = self.shared.notifier_lock.lock().unwrap();
+                // Retry
+                continue;
             }
+
+            // 2. If locked, wait for notification
+            let epoch = self.shared.writer_notify.load(Ordering::Acquire);
+            
+            // Re-check current before waiting to avoid race
+            val = self.shared.current.load(Ordering::Acquire);
+            if (val & TAG_MASK) == 0 {
+                 continue;
+            }
+
+            wait(&self.shared.writer_notify, epoch);
         }
     }
 
@@ -183,8 +191,7 @@ impl<T> RetroCell<T> {
         let shared = Arc::new(SharedState {
             current: AtomicUsize::new(ptr as usize),
             previous: AtomicPtr::new(ptr::null_mut()),
-            notifier_lock: Mutex::new(ptr as usize),
-            notifier_cond: Condvar::new(),
+            writer_notify: AtomicU32::new(0),
         });
 
         let writer = RetroCell { shared: shared.clone(), garbage: VecDeque::new() };
@@ -238,18 +245,16 @@ impl<T> RetroCell<T> {
                     self.shared.current.store(curr_val & PTR_MASK, Ordering::Release);
 
                     // Notify
-                    let mut g = self.shared.notifier_lock.lock().unwrap();
-                    *g = curr_val & PTR_MASK;
-                    self.shared.notifier_cond.notify_all();
+                    self.shared.writer_notify.fetch_add(1, Ordering::Release);
+                    wake_all(&self.shared.writer_notify);
                     return result;
                 } else {
                     // Failed double check, rollback lock
                     self.shared.current.store(curr_val, Ordering::Release);
                     // We must notify because some readers might have seen the lock 
                     // (set by us) and started waiting.
-                    let mut g = self.shared.notifier_lock.lock().unwrap();
-                    *g = curr_val;
-                    self.shared.notifier_cond.notify_all();
+                    self.shared.writer_notify.fetch_add(1, Ordering::Release);
+                    wake_all(&self.shared.writer_notify);
                 }
             }
         }
