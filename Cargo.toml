@@ -1,0 +1,14 @@
+[package]
+name = "retro-cell"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+
+[dev-dependencies]
+criterion = "0.7.0"
+arc-swap = "1.7.1"
+
+[[bench]]
+name = "performance"
+harness = false
