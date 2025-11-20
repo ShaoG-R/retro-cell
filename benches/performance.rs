@@ -1,5 +1,5 @@
 use criterion::{criterion_group, criterion_main, Criterion, BenchmarkId};
-use retro_cell::RetroCell;
+use retro_cell::{ReadResult, RetroCell};
 use arc_swap::ArcSwap;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -44,8 +44,14 @@ fn bench_single_thread_read(c: &mut Criterion) {
     group.bench_function("RetroCell", |b| {
         let (_writer, reader) = RetroCell::new(create_data());
         b.iter(|| {
-            let guard = reader.read();
-            black_box(&guard);
+            match reader.read() {
+                ReadResult::Success(_ref) => {
+                    black_box(_ref);
+                }
+                ReadResult::Blocked(blocked) => {
+                    black_box(blocked.wait());
+                }
+            }
         })
     });
 
@@ -103,7 +109,7 @@ fn bench_single_thread_write(c: &mut Criterion) {
 fn bench_multi_thread_read(c: &mut Criterion) {
     let mut group = c.benchmark_group("MultiThreadRead");
     
-    for threads in [1, 2, 4, 8] {
+    for threads in [2, 4, 8] {
         group.bench_with_input(BenchmarkId::new("RetroCell", threads), &threads, |b, &t| {
             let (_writer, reader) = RetroCell::new(create_data());
             b.iter_custom(|iters| {
@@ -113,7 +119,14 @@ fn bench_multi_thread_read(c: &mut Criterion) {
                         let r = reader.clone();
                         s.spawn(move || {
                             for _ in 0..iters {
-                                black_box(r.read());
+                                match r.read() {
+                                    ReadResult::Success(_ref) => {
+                                        black_box(_ref);
+                                    }
+                                    ReadResult::Blocked(blocked) => {
+                                        black_box(blocked.wait());
+                                    }
+                                }
                             }
                         });
                     }
@@ -190,7 +203,14 @@ fn bench_mixed_ratio(c: &mut Criterion) {
                         let r = reader.clone();
                         s.spawn(move || {
                             for _ in 0..iters {
-                                black_box(r.read());
+                                match r.read() {
+                                    ReadResult::Success(_ref) => {
+                                        black_box(_ref);
+                                    }
+                                    ReadResult::Blocked(blocked) => {
+                                        black_box(blocked.wait());
+                                    }
+                                }
                             }
                         });
                     }
@@ -293,7 +313,14 @@ fn bench_multi_writer_multi_reader(c: &mut Criterion) {
                         let r = reader.clone();
                         s.spawn(move || {
                             for _ in 0..iters {
-                                black_box(r.read());
+                                match r.read() {
+                                    ReadResult::Success(_ref) => {
+                                        black_box(_ref);
+                                    }
+                                    ReadResult::Blocked(blocked) => {
+                                        black_box(blocked.wait());
+                                    }
+                                }
                             }
                         });
                     }

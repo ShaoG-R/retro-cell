@@ -235,6 +235,10 @@ impl<T> RetroCell<T> {
                 } else {
                     // Failed double check, rollback lock
                     self.shared.current.store(curr_val, Ordering::Release);
+                    // We must notify because some readers might have seen the lock 
+                    // (set by us) and started waiting.
+                    let _g = self.shared.notifier_lock.lock().unwrap();
+                    self.shared.notifier_cond.notify_all();
                 }
             }
         }
