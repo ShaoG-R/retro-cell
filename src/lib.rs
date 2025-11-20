@@ -39,7 +39,7 @@ struct SharedState<T> {
     /// Previous Epoch (Snapshot), no Tag
     previous: AtomicPtr<Node<T>>,
 
-    notifier_lock: Mutex<()>,
+    notifier_lock: Mutex<usize>,
     notifier_cond: Condvar,
 }
 
@@ -84,7 +84,6 @@ pub enum ReadResult<'a, T> {
 /// Handler for when the writer is active
 pub struct BlockedReader<'a, T> {
     shared: &'a SharedState<T>,
-    reader: &'a Reader<T>,
 }
 
 impl<'a, T> BlockedReader<'a, T> {
@@ -92,13 +91,24 @@ impl<'a, T> BlockedReader<'a, T> {
     pub fn wait(self) -> ReadResult<'a, T> {
         let mut guard = self.shared.notifier_lock.lock().unwrap();
         loop {
-            let val = self.shared.current.load(Ordering::Acquire);
-            // Check Tag Bit
+            let mut val = self.shared.current.load(Ordering::Acquire);
+            if (val & TAG_MASK) != 0 {
+                guard = self.shared.notifier_cond.wait(guard).unwrap();
+                val = *guard;
+            }
+
             if (val & TAG_MASK) == 0 {
                 drop(guard);
-                return self.reader.read();
+                let ptr = (val & PTR_MASK) as *mut Node<T>;
+                let node = unsafe { &*ptr };
+                node.reader_count.fetch_add(REF_ONE, Ordering::Acquire);
+
+                if self.shared.current.load(Ordering::Acquire) == val {
+                    return ReadResult::Success(Ref { node });
+                }
+                node.reader_count.fetch_sub(REF_ONE, Ordering::Release);
+                guard = self.shared.notifier_lock.lock().unwrap();
             }
-            guard = self.shared.notifier_cond.wait(guard).unwrap();
         }
     }
 
@@ -130,7 +140,6 @@ impl<T> Reader<T> {
             if (curr_val & TAG_MASK) == LOCKED {
                 return ReadResult::Blocked(BlockedReader {
                     shared: &self.shared,
-                    reader: self
                 });
             }
 
@@ -174,7 +183,7 @@ impl<T> RetroCell<T> {
         let shared = Arc::new(SharedState {
             current: AtomicUsize::new(ptr as usize),
             previous: AtomicPtr::new(ptr::null_mut()),
-            notifier_lock: Mutex::new(()),
+            notifier_lock: Mutex::new(ptr as usize),
             notifier_cond: Condvar::new(),
         });
 
@@ -229,7 +238,8 @@ impl<T> RetroCell<T> {
                     self.shared.current.store(curr_val & PTR_MASK, Ordering::Release);
 
                     // Notify
-                    let _g = self.shared.notifier_lock.lock().unwrap();
+                    let mut g = self.shared.notifier_lock.lock().unwrap();
+                    *g = curr_val & PTR_MASK;
                     self.shared.notifier_cond.notify_all();
                     return result;
                 } else {
@@ -237,7 +247,8 @@ impl<T> RetroCell<T> {
                     self.shared.current.store(curr_val, Ordering::Release);
                     // We must notify because some readers might have seen the lock 
                     // (set by us) and started waiting.
-                    let _g = self.shared.notifier_lock.lock().unwrap();
+                    let mut g = self.shared.notifier_lock.lock().unwrap();
+                    *g = curr_val;
                     self.shared.notifier_cond.notify_all();
                 }
             }
