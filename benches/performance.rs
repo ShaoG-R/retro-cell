@@ -11,6 +11,19 @@ fn create_data() -> Vec<u32> {
     vec![0_u32; DATA_SIZE]
 }
 
+fn write_data(outcome: WriteOutcome<'_, Vec<u32>>) {
+    match outcome {
+        WriteOutcome::InPlace(mut g) => {
+            g[0] = g[0].wrapping_add(1);
+        }
+        WriteOutcome::Congested(w) => {
+            w.perform_cow(|v| {
+                v[0] = v[0].wrapping_add(1);
+            });
+        }
+    }
+}
+
 fn bench_new(c: &mut Criterion) {
     let mut group = c.benchmark_group("New");
 
@@ -43,7 +56,7 @@ fn bench_single_thread_read(c: &mut Criterion) {
 
     group.bench_function("RetroCell", |b| {
         let (_writer, reader) = RetroCell::new(create_data());
-        b.iter(|| match reader.read() {
+        b.iter(|| match reader.try_read() {
             ReadResult::Success(_ref) => {
                 black_box(_ref);
             }
@@ -77,15 +90,7 @@ fn bench_single_thread_write(c: &mut Criterion) {
 
     group.bench_function("RetroCell", |b| {
         let (mut writer, _reader) = RetroCell::new(create_data());
-        b.iter(|| match writer.write() {
-            WriteOutcome::InPlace(mut g) => {
-                g[0] = g[0].wrapping_add(1);
-            }
-            WriteOutcome::Congested(w) => {
-                let mut g = w.force_in_place();
-                g[0] = g[0].wrapping_add(1);
-            }
-        })
+        b.iter(|| write_data(writer.try_write()));
     });
 
     group.bench_function("ArcSwap", |b| {
@@ -121,14 +126,7 @@ fn bench_multi_thread_read(c: &mut Criterion) {
                         let r = reader.clone();
                         s.spawn(move || {
                             for _ in 0..iters {
-                                match r.read() {
-                                    ReadResult::Success(_ref) => {
-                                        black_box(_ref);
-                                    }
-                                    ReadResult::Blocked(blocked) => {
-                                        black_box(blocked.wait());
-                                    }
-                                }
+                                let _ = black_box(r.read());
                             }
                         });
                     }
@@ -199,15 +197,7 @@ fn bench_mixed_ratio(c: &mut Criterion) {
                         if write_iters > 0 {
                             s.spawn(move || {
                                 for _ in 0..write_iters {
-                                    match w.write() {
-                                        WriteOutcome::InPlace(mut g) => {
-                                            g[0] = g[0].wrapping_add(1);
-                                        }
-                                        WriteOutcome::Congested(w) => {
-                                            let mut g = w.force_in_place();
-                                            g[0] = g[0].wrapping_add(1);
-                                        }
-                                    }
+                                    write_data(w.try_write());
                                 }
                             });
                         }
@@ -216,7 +206,7 @@ fn bench_mixed_ratio(c: &mut Criterion) {
                             let r = reader.clone();
                             s.spawn(move || {
                                 for _ in 0..iters {
-                                    match r.read() {
+                                    match r.try_read() {
                                         ReadResult::Success(_ref) => {
                                             black_box(_ref);
                                         }
@@ -322,15 +312,7 @@ fn bench_multi_writer_multi_reader(c: &mut Criterion) {
                         let w = writer.clone();
                         s.spawn(move || {
                             for _ in 0..iters {
-                                match w.lock().unwrap().write() {
-                                    WriteOutcome::InPlace(mut g) => {
-                                        g[0] = g[0].wrapping_add(1);
-                                    }
-                                    WriteOutcome::Congested(w) => {
-                                        let mut g = w.force_in_place();
-                                        g[0] = g[0].wrapping_add(1);
-                                    }
-                                };
+                                write_data(w.lock().unwrap().try_write());
                             }
                         });
                     }
@@ -339,7 +321,7 @@ fn bench_multi_writer_multi_reader(c: &mut Criterion) {
                         let r = reader.clone();
                         s.spawn(move || {
                             for _ in 0..iters {
-                                match r.read() {
+                                match r.try_read() {
                                     ReadResult::Success(_ref) => {
                                         black_box(_ref);
                                     }
