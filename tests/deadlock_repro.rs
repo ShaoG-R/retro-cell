@@ -1,6 +1,13 @@
-use retro_cell::{ReadResult, RetroCell};
+use retro_cell::{ReadResult, RetroCell, WriteOutcome};
 use std::thread;
 use std::time::Duration;
+
+fn update_helper<T: Clone>(cell: &mut RetroCell<T>, f: impl FnOnce(&mut T)) {
+    match cell.write() {
+        WriteOutcome::InPlace(mut guard) => f(&mut guard),
+        WriteOutcome::Congested(writer) => writer.perform_cow(f),
+    }
+}
 
 #[test]
 fn test_mixed_read_write_deadlock_repro() {
@@ -19,7 +26,7 @@ fn test_mixed_read_write_deadlock_repro() {
             if write_iters > 0 {
                 s.spawn(move || {
                     for _ in 0..write_iters {
-                        w.update(|v| v[0] = v[0].wrapping_add(1));
+                        update_helper(w, |v| v[0] = v[0].wrapping_add(1));
                     }
                 });
             }

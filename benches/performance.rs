@@ -1,8 +1,8 @@
 use arc_swap::ArcSwap;
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use retro_cell::{ReadResult, RetroCell};
+use retro_cell::{ReadResult, RetroCell, WriteOutcome};
 use std::hint::black_box;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::thread;
 
 const DATA_SIZE: usize = 64;
@@ -28,9 +28,9 @@ fn bench_new(c: &mut Criterion) {
         })
     });
 
-    group.bench_function("Mutex", |b| {
+    group.bench_function("RwLock", |b| {
         b.iter(|| {
-            let l = Mutex::new(create_data());
+            let l = RwLock::new(create_data());
             black_box(l);
         })
     });
@@ -61,10 +61,10 @@ fn bench_single_thread_read(c: &mut Criterion) {
         })
     });
 
-    group.bench_function("Mutex", |b| {
-        let l = Mutex::new(create_data());
+    group.bench_function("RwLock", |b| {
+        let l = RwLock::new(create_data());
         b.iter(|| {
-            let guard = l.lock().unwrap();
+            let guard = l.read().unwrap();
             black_box(&*guard);
         })
     });
@@ -78,9 +78,15 @@ fn bench_single_thread_write(c: &mut Criterion) {
     group.bench_function("RetroCell", |b| {
         let (mut writer, _reader) = RetroCell::new(create_data());
         b.iter(|| {
-            writer.update(|v| {
-                v[0] = v[0].wrapping_add(1);
-            });
+            match writer.write() {
+                WriteOutcome::InPlace(mut g) => {
+                    g[0] = g[0].wrapping_add(1);
+                },
+                WriteOutcome::Congested(w) => {
+                    let mut g = w.force_in_place();
+                    g[0] = g[0].wrapping_add(1);
+                } 
+            }
         })
     });
 
@@ -93,10 +99,10 @@ fn bench_single_thread_write(c: &mut Criterion) {
         })
     });
 
-    group.bench_function("Mutex", |b| {
-        let l = Mutex::new(create_data());
+    group.bench_function("RwLock", |b| {
+        let l = RwLock::new(create_data());
         b.iter(|| {
-            let mut guard = l.lock().unwrap();
+            let mut guard = l.write().unwrap();
             guard[0] = guard[0].wrapping_add(1);
         })
     });
@@ -151,8 +157,8 @@ fn bench_multi_thread_read(c: &mut Criterion) {
             })
         });
 
-        group.bench_with_input(BenchmarkId::new("Mutex", threads), &threads, |b, &t| {
-            let l = Arc::new(Mutex::new(create_data()));
+        group.bench_with_input(BenchmarkId::new("RwLock", threads), &threads, |b, &t| {
+            let l = Arc::new(RwLock::new(create_data()));
             b.iter_custom(|iters| {
                 let start = std::time::Instant::now();
                 thread::scope(|s| {
@@ -160,7 +166,7 @@ fn bench_multi_thread_read(c: &mut Criterion) {
                         let l_clone = l.clone();
                         s.spawn(move || {
                             for _ in 0..iters {
-                                let v = l_clone.lock().unwrap();
+                                let v = l_clone.read().unwrap();
                                 black_box(&v);
                             }
                         });
@@ -195,7 +201,15 @@ fn bench_mixed_ratio(c: &mut Criterion) {
                         if write_iters > 0 {
                             s.spawn(move || {
                                 for _ in 0..write_iters {
-                                    w.update(|v| v[0] = v[0].wrapping_add(1));
+                                    match w.write() {
+                                        WriteOutcome::InPlace(mut g) => {
+                                            g[0] = g[0].wrapping_add(1);
+                                        },
+                                        WriteOutcome::Congested(w) => {
+                                            let mut g = w.force_in_place();
+                                            g[0] = g[0].wrapping_add(1);
+                                        } 
+                                    }
                                 }
                             });
                         }
@@ -256,10 +270,10 @@ fn bench_mixed_ratio(c: &mut Criterion) {
         );
 
         group.bench_with_input(
-            BenchmarkId::new("Mutex", format!("{}:1", ratio)),
+            BenchmarkId::new("RwLock", format!("{}:1", ratio)),
             &ratio,
             |b, &r| {
-                let l = Arc::new(Mutex::new(create_data()));
+                let l = Arc::new(RwLock::new(create_data()));
                 b.iter_custom(|iters| {
                     let write_iters = (iters * num_readers as u64) / r as u64;
                     let start = std::time::Instant::now();
@@ -268,7 +282,7 @@ fn bench_mixed_ratio(c: &mut Criterion) {
                             let l_clone = l.clone();
                             _s.spawn(move || {
                                 for _ in 0..write_iters {
-                                    let mut guard = l_clone.lock().unwrap();
+                                    let mut guard = l_clone.write().unwrap();
                                     guard[0] = guard[0].wrapping_add(1);
                                 }
                             });
@@ -278,7 +292,7 @@ fn bench_mixed_ratio(c: &mut Criterion) {
                             let l_clone = l.clone();
                             _s.spawn(move || {
                                 for _ in 0..iters {
-                                    let v = l_clone.lock().unwrap();
+                                    let v = l_clone.read().unwrap();
                                     black_box(&*v);
                                 }
                             });
@@ -310,7 +324,15 @@ fn bench_multi_writer_multi_reader(c: &mut Criterion) {
                         let w = writer.clone();
                         s.spawn(move || {
                             for _ in 0..iters {
-                                w.lock().unwrap().update(|v| v[0] = v[0].wrapping_add(1));
+                                match w.lock().unwrap().write() {
+                                    WriteOutcome::InPlace(mut g) => {
+                                        g[0] = g[0].wrapping_add(1);
+                                    },
+                                    WriteOutcome::Congested(w) => {
+                                        let mut g = w.force_in_place();
+                                        g[0] = g[0].wrapping_add(1);
+                                    } 
+                                };
                             }
                         });
                     }
@@ -366,8 +388,8 @@ fn bench_multi_writer_multi_reader(c: &mut Criterion) {
             })
         });
 
-        group.bench_with_input(BenchmarkId::new("Mutex", name), &name, |b, &_| {
-            let l = Arc::new(Mutex::new(create_data()));
+        group.bench_with_input(BenchmarkId::new("RwLock", name), &name, |b, &_| {
+            let l = Arc::new(RwLock::new(create_data()));
 
             b.iter_custom(|iters| {
                 let start = std::time::Instant::now();
@@ -377,7 +399,7 @@ fn bench_multi_writer_multi_reader(c: &mut Criterion) {
                         let l_clone = l.clone();
                         s.spawn(move || {
                             for _ in 0..iters {
-                                let mut guard = l_clone.lock().unwrap();
+                                let mut guard = l_clone.write().unwrap();
                                 guard[0] = guard[0].wrapping_add(1);
                             }
                         });
@@ -387,7 +409,7 @@ fn bench_multi_writer_multi_reader(c: &mut Criterion) {
                         let l_clone = l.clone();
                         s.spawn(move || {
                             for _ in 0..iters {
-                                let v = l_clone.lock().unwrap();
+                                let v = l_clone.read().unwrap();
                                 black_box(&*v);
                             }
                         });

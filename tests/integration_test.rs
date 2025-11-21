@@ -1,7 +1,16 @@
-use retro_cell::{ReadResult, RetroCell};
+use retro_cell::{ReadResult, RetroCell, WriteOutcome};
 use std::sync::{Arc, Barrier};
 use std::thread;
 use std::time::Duration;
+
+// Helper for simple updates that mimics the old update behavior:
+// Try InPlace if possible (no readers), otherwise fallback to COW.
+fn simple_update<T: Clone>(cell: &mut RetroCell<T>, f: impl FnOnce(&mut T)) {
+    match cell.write() {
+        WriteOutcome::InPlace(mut guard) => f(&mut guard),
+        WriteOutcome::Congested(writer) => writer.perform_cow(f),
+    }
+}
 
 #[test]
 fn test_basic_usage() {
@@ -15,7 +24,7 @@ fn test_basic_usage() {
     }
 
     // Update
-    writer.update(|val| *val = 20);
+    simple_update(&mut writer, |val| *val = 20);
 
     // Read after update
     if let ReadResult::Success(guard) = reader.read() {
@@ -39,7 +48,12 @@ fn test_inplace_update() {
     } // guard dropped, reader_count should be 0
 
     // Should be in-place because no readers
-    writer.update(|val| *val = 101);
+    match writer.write() {
+        WriteOutcome::InPlace(mut guard) => {
+            *guard = 101;
+        }
+        WriteOutcome::Congested(_) => panic!("Should be InPlace update when no readers are active"),
+    }
 
     let addr_2;
     {
@@ -65,8 +79,13 @@ fn test_cow_update() {
     };
     let addr_1 = &*guard1 as *const i32;
 
-    // guard1 is held, so reader_count > 0. Update should trigger COW.
-    writer.update(|val| *val = 201);
+    // guard1 is held, so reader_count > 0. Update should trigger Congested.
+    match writer.write() {
+        WriteOutcome::Congested(w) => {
+             w.perform_cow(|val| *val = 201);
+        }
+        WriteOutcome::InPlace(_) => panic!("Should be Congested (COW) update when readers are active"),
+    }
 
     let guard2 = match reader.read() {
         ReadResult::Success(g) => g,
@@ -88,12 +107,15 @@ fn test_blocked_reader() {
     let barrier_c = barrier.clone();
 
     let t = thread::spawn(move || {
-        writer.update(|val| {
-            // Signal we are in update (and locked, because 0 readers)
-            *val = 301;
-            barrier_c.wait(); // Wait for main thread to try reading
-            thread::sleep(Duration::from_millis(100));
-        });
+        // We want to ensure InPlace update to block readers
+        match writer.write() {
+            WriteOutcome::InPlace(mut guard) => {
+                *guard = 301;
+                barrier_c.wait(); // Wait for main thread to try reading
+                thread::sleep(Duration::from_millis(100));
+            }
+            WriteOutcome::Congested(_) => panic!("Writer should not be congested here (no readers)"),
+        }
     });
 
     // Wait for writer to enter the closure
@@ -124,35 +146,31 @@ fn test_blocked_reader() {
 
 #[test]
 fn test_read_retro_during_cow() {
-    // To test read_retro properly, we need a scenario where previous is valid.
-    // 1. Perform a COW update to establish a 'previous'.
-    // 2. Perform an In-Place update to Lock it?
-    //    If we do In-Place, 'previous' is not changed, so it points to the OLD old one?
-    //    Let's trace:
-    //    State 0: Node A.
-    //    Update 1 (COW): Node A becomes previous. Node B is current.
-    //    Update 2 (In-Place): Node B is locked. Node A is still previous.
-    //    Reader comes in -> Sees Node B locked. Calls read_retro(). Should get Node A.
-
     let (mut writer, reader) = RetroCell::new(10);
 
-    // Step 1: COW update
+    // Step 1: COW update to establish a previous version
     {
         let _g = reader.read(); // Hold read to force COW
-        writer.update(|v| *v = 20);
+        match writer.write() {
+            WriteOutcome::Congested(w) => w.perform_cow(|v| *v = 20),
+            WriteOutcome::InPlace(_) => panic!("Should be Congested"),
+        }
     }
-    // Now: Current = 20 (Node B), Previous = 10 (Node A). Reader count on Node B is 0.
+    // Now: Current = 20 (Node B), Previous = 10 (Node A).
 
     // Step 2: In-Place update that hangs
     let barrier = Arc::new(Barrier::new(2));
     let barrier_c = barrier.clone();
 
     let t = thread::spawn(move || {
-        writer.update(|v| {
-            *v = 30;
-            barrier_c.wait(); // Wait for reader
-            thread::sleep(Duration::from_millis(100));
-        });
+        match writer.write() {
+            WriteOutcome::InPlace(mut g) => {
+                *g = 30;
+                barrier_c.wait(); // Wait for reader
+                thread::sleep(Duration::from_millis(100));
+            }
+            WriteOutcome::Congested(_) => panic!("Should be InPlace"),
+        }
     });
 
     barrier.wait();
@@ -160,8 +178,9 @@ fn test_read_retro_during_cow() {
     // Now writer is locked on Node B.
     match reader.read() {
         ReadResult::Blocked(handler) => {
+            // read_retro should return the *previous* valid node (Node A = 10)
             let old_guard = handler.read_retro().expect("Should have old value");
-            assert_eq!(*old_guard, 10); // Should be Node A (10), not Node B (which is being written to 30)
+            assert_eq!(*old_guard, 10); 
 
             if let ReadResult::Success(new_g) = handler.wait() {
                 assert_eq!(*new_g, 30);
@@ -201,7 +220,7 @@ fn test_concurrency_stress() {
     }
 
     for i in 1..1000 {
-        writer.update(|v| *v = i);
+        simple_update(&mut writer, |v| *v = i);
         if i % 100 == 0 {
             thread::yield_now();
         }
