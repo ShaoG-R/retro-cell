@@ -26,6 +26,7 @@ const WAITING_BIT: u32 = 1 << 31;
 const COUNT_MASK: u32 = !WAITING_BIT;
 
 impl RefCount {
+    #[inline(always)]
     fn new() -> Self {
         Self {
             state: AtomicU32::new(0),
@@ -95,6 +96,7 @@ impl RefCount {
     }
 
     // 重置状态（当节点被回收复用时）
+    #[inline(always)]
     fn reset(&self) {
         self.state.store(0, Ordering::Relaxed);
     }
@@ -156,9 +158,11 @@ struct Backoff {
     step: u32,
 }
 impl Backoff {
+    #[inline(always)]
     fn new() -> Self {
         Self { step: 0 }
     }
+    #[inline(always)]
     fn snooze(&mut self) {
         if self.step < 10 {
             spin_loop();
@@ -179,6 +183,7 @@ struct CachePadded<T> {
 
 impl<T> Deref for CachePadded<T> {
     type Target = T;
+    #[inline(always)]
     fn deref(&self) -> &T {
         &self.value
     }
@@ -191,6 +196,7 @@ struct Node<T> {
 }
 
 impl<T> Node<T> {
+    #[inline(always)]
     fn new(data: T) -> Self {
         Self {
             data: UnsafeCell::new(data),
@@ -215,6 +221,7 @@ unsafe impl<T: Send + Sync> Send for SharedState<T> {}
 unsafe impl<T: Send + Sync> Sync for SharedState<T> {}
 
 impl<T> Drop for SharedState<T> {
+    #[inline(always)]
     fn drop(&mut self) {
         let curr_val = self.current.load(Ordering::Relaxed);
         let curr_ptr = (curr_val & PTR_MASK) as *mut Node<T>;
@@ -234,12 +241,14 @@ pub struct Ref<'a, T> {
 
 impl<'a, T> Deref for Ref<'a, T> {
     type Target = T;
+    #[inline(always)]
     fn deref(&self) -> &Self::Target {
         unsafe { &*self.node.data.get() }
     }
 }
 
 impl<'a, T> Drop for Ref<'a, T> {
+    #[inline(always)]
     fn drop(&mut self) {
         self.node.reader_count.release();
     }
@@ -288,6 +297,7 @@ impl<'a, T> BlockedReader<'a, T> {
         }
     }
 
+    #[inline]
     pub fn read_retro(&self) -> Option<Ref<'a, T>> {
         let prev_ptr = self.shared.previous.load(Ordering::Acquire);
         if prev_ptr.is_null() {
@@ -341,6 +351,7 @@ pub struct InPlaceGuard<'a, T> {
 
 impl<'a, T> Deref for InPlaceGuard<'a, T> {
     type Target = T;
+    #[inline]
     fn deref(&self) -> &T {
         let ptr = (self.locked_val & PTR_MASK) as *mut Node<T>;
         unsafe { &*(*ptr).data.get() }
@@ -348,6 +359,7 @@ impl<'a, T> Deref for InPlaceGuard<'a, T> {
 }
 
 impl<'a, T> DerefMut for InPlaceGuard<'a, T> {
+    #[inline]
     fn deref_mut(&mut self) -> &mut T {
         let ptr = (self.locked_val & PTR_MASK) as *mut Node<T>;
         unsafe { &mut *(*ptr).data.get() }
@@ -355,6 +367,7 @@ impl<'a, T> DerefMut for InPlaceGuard<'a, T> {
 }
 
 impl<'a, T> Drop for InPlaceGuard<'a, T> {
+    #[inline]
     fn drop(&mut self) {
         // 解锁
         self.cell
@@ -475,6 +488,7 @@ impl<T> RetroCell<T> {
         )
     }
 
+    #[inline]
     fn collect_garbage(&mut self) {
         // 垃圾回收逻辑保持不变
         while self.garbage.len() > 1 {
@@ -522,6 +536,7 @@ impl<T> RetroCell<T> {
 }
 
 impl<T> Drop for RetroCell<T> {
+    #[inline]
     fn drop(&mut self) {
         self.collect_garbage();
         while let Some(ptr) = self.garbage.pop_front() {
