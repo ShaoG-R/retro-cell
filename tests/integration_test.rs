@@ -1,4 +1,4 @@
-use retro_cell::{RetroCell, ReadResult};
+use retro_cell::{ReadResult, RetroCell};
 use std::sync::{Arc, Barrier};
 use std::thread;
 use std::time::Duration;
@@ -6,7 +6,7 @@ use std::time::Duration;
 #[test]
 fn test_basic_usage() {
     let (mut writer, reader) = RetroCell::new(10);
-    
+
     // Initial read
     if let ReadResult::Success(guard) = reader.read() {
         assert_eq!(*guard, 10);
@@ -83,7 +83,7 @@ fn test_cow_update() {
 #[test]
 fn test_blocked_reader() {
     let (mut writer, reader) = RetroCell::new(300);
-    
+
     let barrier = Arc::new(Barrier::new(2));
     let barrier_c = barrier.clone();
 
@@ -92,7 +92,7 @@ fn test_blocked_reader() {
             // Signal we are in update (and locked, because 0 readers)
             *val = 301;
             barrier_c.wait(); // Wait for main thread to try reading
-            thread::sleep(Duration::from_millis(100)); 
+            thread::sleep(Duration::from_millis(100));
         });
     });
 
@@ -102,7 +102,7 @@ fn test_blocked_reader() {
 
     match reader.read() {
         ReadResult::Success(_) => {
-             panic!("Should have encountered Blocked because writer is locked in in-place update");
+            panic!("Should have encountered Blocked because writer is locked in in-place update");
         }
         ReadResult::Blocked(handler) => {
             // Previous is null/empty initially
@@ -110,7 +110,7 @@ fn test_blocked_reader() {
             assert!(old.is_none());
 
             // Wait for update to finish
-            let res = handler.wait(); 
+            let res = handler.wait();
             if let ReadResult::Success(g) = res {
                 assert_eq!(*g, 301);
             } else {
@@ -126,27 +126,27 @@ fn test_blocked_reader() {
 fn test_read_retro_during_cow() {
     // To test read_retro properly, we need a scenario where previous is valid.
     // 1. Perform a COW update to establish a 'previous'.
-    // 2. Perform an In-Place update to Lock it? 
+    // 2. Perform an In-Place update to Lock it?
     //    If we do In-Place, 'previous' is not changed, so it points to the OLD old one?
     //    Let's trace:
     //    State 0: Node A.
     //    Update 1 (COW): Node A becomes previous. Node B is current.
     //    Update 2 (In-Place): Node B is locked. Node A is still previous.
     //    Reader comes in -> Sees Node B locked. Calls read_retro(). Should get Node A.
-    
+
     let (mut writer, reader) = RetroCell::new(10);
-    
+
     // Step 1: COW update
     {
         let _g = reader.read(); // Hold read to force COW
         writer.update(|v| *v = 20);
     }
     // Now: Current = 20 (Node B), Previous = 10 (Node A). Reader count on Node B is 0.
-    
+
     // Step 2: In-Place update that hangs
     let barrier = Arc::new(Barrier::new(2));
     let barrier_c = barrier.clone();
-    
+
     let t = thread::spawn(move || {
         writer.update(|v| {
             *v = 30;
@@ -154,22 +154,22 @@ fn test_read_retro_during_cow() {
             thread::sleep(Duration::from_millis(100));
         });
     });
-    
+
     barrier.wait();
-    
+
     // Now writer is locked on Node B.
     match reader.read() {
         ReadResult::Blocked(handler) => {
             let old_guard = handler.read_retro().expect("Should have old value");
             assert_eq!(*old_guard, 10); // Should be Node A (10), not Node B (which is being written to 30)
-            
+
             if let ReadResult::Success(new_g) = handler.wait() {
                 assert_eq!(*new_g, 30);
             }
         }
         _ => panic!("Should be Blocked"),
     }
-    
+
     t.join().unwrap();
 }
 
@@ -191,7 +191,7 @@ fn test_concurrency_stress() {
                     }
                     ReadResult::Blocked(h) => {
                         if let ReadResult::Success(g) = h.wait() {
-                             let _ = *g;
+                            let _ = *g;
                         }
                     }
                 }

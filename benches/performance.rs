@@ -1,9 +1,9 @@
-use criterion::{criterion_group, criterion_main, Criterion, BenchmarkId};
-use retro_cell::{ReadResult, RetroCell};
 use arc_swap::ArcSwap;
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
+use retro_cell::{ReadResult, RetroCell};
+use std::hint::black_box;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::hint::black_box;
 
 const DATA_SIZE: usize = 64;
 
@@ -13,7 +13,7 @@ fn create_data() -> Vec<u32> {
 
 fn bench_new(c: &mut Criterion) {
     let mut group = c.benchmark_group("New");
-    
+
     group.bench_function("RetroCell", |b| {
         b.iter(|| {
             let (writer, reader) = RetroCell::new(create_data());
@@ -40,17 +40,15 @@ fn bench_new(c: &mut Criterion) {
 
 fn bench_single_thread_read(c: &mut Criterion) {
     let mut group = c.benchmark_group("SingleThreadRead");
-    
+
     group.bench_function("RetroCell", |b| {
         let (_writer, reader) = RetroCell::new(create_data());
-        b.iter(|| {
-            match reader.read() {
-                ReadResult::Success(_ref) => {
-                    black_box(_ref);
-                }
-                ReadResult::Blocked(blocked) => {
-                    black_box(blocked.wait());
-                }
+        b.iter(|| match reader.read() {
+            ReadResult::Success(_ref) => {
+                black_box(_ref);
+            }
+            ReadResult::Blocked(blocked) => {
+                black_box(blocked.wait());
             }
         })
     });
@@ -76,7 +74,7 @@ fn bench_single_thread_read(c: &mut Criterion) {
 
 fn bench_single_thread_write(c: &mut Criterion) {
     let mut group = c.benchmark_group("SingleThreadWrite");
-    
+
     group.bench_function("RetroCell", |b| {
         let (mut writer, _reader) = RetroCell::new(create_data());
         b.iter(|| {
@@ -108,7 +106,7 @@ fn bench_single_thread_write(c: &mut Criterion) {
 
 fn bench_multi_thread_read(c: &mut Criterion) {
     let mut group = c.benchmark_group("MultiThreadRead");
-    
+
     for threads in [2, 4, 8] {
         group.bench_with_input(BenchmarkId::new("RetroCell", threads), &threads, |b, &t| {
             let (_writer, reader) = RetroCell::new(create_data());
@@ -184,100 +182,112 @@ fn bench_mixed_ratio(c: &mut Criterion) {
     let num_readers = 4;
 
     for ratio in ratios {
-        group.bench_with_input(BenchmarkId::new("RetroCell", format!("{}:1", ratio)), &ratio, |b, &r| {
-            let (mut writer, reader) = RetroCell::new(create_data());
-            b.iter_custom(|iters| {
-                let write_iters = (iters * num_readers as u64) / r as u64;
-                let start = std::time::Instant::now();
-                thread::scope(|s| {
-                    let w = &mut writer;
-                    if write_iters > 0 {
-                        s.spawn(move || {
-                            for _ in 0..write_iters {
-                                w.update(|v| v[0] = v[0].wrapping_add(1));
-                            }
-                        });
-                    }
-                    
-                    for _ in 0..num_readers {
-                        let r = reader.clone();
-                        s.spawn(move || {
-                            for _ in 0..iters {
-                                match r.read() {
-                                    ReadResult::Success(_ref) => {
-                                        black_box(_ref);
-                                    }
-                                    ReadResult::Blocked(blocked) => {
-                                        black_box(blocked.wait());
+        group.bench_with_input(
+            BenchmarkId::new("RetroCell", format!("{}:1", ratio)),
+            &ratio,
+            |b, &r| {
+                let (mut writer, reader) = RetroCell::new(create_data());
+                b.iter_custom(|iters| {
+                    let write_iters = (iters * num_readers as u64) / r as u64;
+                    let start = std::time::Instant::now();
+                    thread::scope(|s| {
+                        let w = &mut writer;
+                        if write_iters > 0 {
+                            s.spawn(move || {
+                                for _ in 0..write_iters {
+                                    w.update(|v| v[0] = v[0].wrapping_add(1));
+                                }
+                            });
+                        }
+
+                        for _ in 0..num_readers {
+                            let r = reader.clone();
+                            s.spawn(move || {
+                                for _ in 0..iters {
+                                    match r.read() {
+                                        ReadResult::Success(_ref) => {
+                                            black_box(_ref);
+                                        }
+                                        ReadResult::Blocked(blocked) => {
+                                            black_box(blocked.wait());
+                                        }
                                     }
                                 }
-                            }
-                        });
-                    }
-                });
-                start.elapsed()
-            })
-        });
+                            });
+                        }
+                    });
+                    start.elapsed()
+                })
+            },
+        );
 
-        group.bench_with_input(BenchmarkId::new("ArcSwap", format!("{}:1", ratio)), &ratio, |b, &r| {
-            let s = Arc::new(ArcSwap::new(Arc::new(create_data())));
-            b.iter_custom(|iters| {
-                let write_iters = (iters * num_readers as u64) / r as u64;
-                let start = std::time::Instant::now();
-                thread::scope(|_s| {
-                     if write_iters > 0 {
-                        let s_clone = s.clone();
-                        _s.spawn(move || {
-                           for _ in 0..write_iters {
-                               let mut new_val = (**s_clone.load()).clone();
-                               new_val[0] = new_val[0].wrapping_add(1);
-                               s_clone.store(Arc::new(new_val));
-                           }
-                        });
-                     }
+        group.bench_with_input(
+            BenchmarkId::new("ArcSwap", format!("{}:1", ratio)),
+            &ratio,
+            |b, &r| {
+                let s = Arc::new(ArcSwap::new(Arc::new(create_data())));
+                b.iter_custom(|iters| {
+                    let write_iters = (iters * num_readers as u64) / r as u64;
+                    let start = std::time::Instant::now();
+                    thread::scope(|_s| {
+                        if write_iters > 0 {
+                            let s_clone = s.clone();
+                            _s.spawn(move || {
+                                for _ in 0..write_iters {
+                                    let mut new_val = (**s_clone.load()).clone();
+                                    new_val[0] = new_val[0].wrapping_add(1);
+                                    s_clone.store(Arc::new(new_val));
+                                }
+                            });
+                        }
 
-                     for _ in 0..num_readers {
-                        let s_clone = s.clone();
-                        _s.spawn(move || {
-                            for _ in 0..iters {
-                                black_box(s_clone.load());
-                            }
-                        });
-                     }
-                });
-                start.elapsed()
-            })
-        });
+                        for _ in 0..num_readers {
+                            let s_clone = s.clone();
+                            _s.spawn(move || {
+                                for _ in 0..iters {
+                                    black_box(s_clone.load());
+                                }
+                            });
+                        }
+                    });
+                    start.elapsed()
+                })
+            },
+        );
 
-        group.bench_with_input(BenchmarkId::new("Mutex", format!("{}:1", ratio)), &ratio, |b, &r| {
-            let l = Arc::new(Mutex::new(create_data()));
-            b.iter_custom(|iters| {
-                let write_iters = (iters * num_readers as u64) / r as u64;
-                let start = std::time::Instant::now();
-                thread::scope(|_s| {
-                     if write_iters > 0 {
-                        let l_clone = l.clone();
-                        _s.spawn(move || {
-                           for _ in 0..write_iters {
-                               let mut guard = l_clone.lock().unwrap();
-                               guard[0] = guard[0].wrapping_add(1);
-                           }
-                        });
-                     }
+        group.bench_with_input(
+            BenchmarkId::new("Mutex", format!("{}:1", ratio)),
+            &ratio,
+            |b, &r| {
+                let l = Arc::new(Mutex::new(create_data()));
+                b.iter_custom(|iters| {
+                    let write_iters = (iters * num_readers as u64) / r as u64;
+                    let start = std::time::Instant::now();
+                    thread::scope(|_s| {
+                        if write_iters > 0 {
+                            let l_clone = l.clone();
+                            _s.spawn(move || {
+                                for _ in 0..write_iters {
+                                    let mut guard = l_clone.lock().unwrap();
+                                    guard[0] = guard[0].wrapping_add(1);
+                                }
+                            });
+                        }
 
-                     for _ in 0..num_readers {
-                        let l_clone = l.clone();
-                        _s.spawn(move || {
-                            for _ in 0..iters {
-                                let v = l_clone.lock().unwrap();
-                                black_box(&*v);
-                            }
-                        });
-                     }
-                });
-                start.elapsed()
-            })
-        });
+                        for _ in 0..num_readers {
+                            let l_clone = l.clone();
+                            _s.spawn(move || {
+                                for _ in 0..iters {
+                                    let v = l_clone.lock().unwrap();
+                                    black_box(&*v);
+                                }
+                            });
+                        }
+                    });
+                    start.elapsed()
+                })
+            },
+        );
     }
     group.finish();
 }
@@ -285,17 +295,13 @@ fn bench_mixed_ratio(c: &mut Criterion) {
 fn bench_multi_writer_multi_reader(c: &mut Criterion) {
     let mut group = c.benchmark_group("MultiWriterMultiReader");
     // (Ratio Name, Readers, Writers)
-    let scenarios = [
-        ("4:1", 16, 4),
-        ("1:1", 4, 4),
-        ("1:4", 4, 16),
-    ];
+    let scenarios = [("4:1", 16, 4), ("1:1", 4, 4), ("1:4", 4, 16)];
 
     for (name, num_readers, num_writers) in scenarios {
         group.bench_with_input(BenchmarkId::new("RetroCell", name), &name, |b, &_| {
             let (writer, reader) = RetroCell::new(create_data());
             let writer = Arc::new(Mutex::new(writer));
-            
+
             b.iter_custom(|iters| {
                 let start = std::time::Instant::now();
                 thread::scope(|s| {
@@ -331,7 +337,7 @@ fn bench_multi_writer_multi_reader(c: &mut Criterion) {
 
         group.bench_with_input(BenchmarkId::new("ArcSwap", name), &name, |b, &_| {
             let s = Arc::new(ArcSwap::new(Arc::new(create_data())));
-            
+
             b.iter_custom(|iters| {
                 let start = std::time::Instant::now();
                 thread::scope(|s_scope| {
@@ -362,7 +368,7 @@ fn bench_multi_writer_multi_reader(c: &mut Criterion) {
 
         group.bench_with_input(BenchmarkId::new("Mutex", name), &name, |b, &_| {
             let l = Arc::new(Mutex::new(create_data()));
-            
+
             b.iter_custom(|iters| {
                 let start = std::time::Instant::now();
                 thread::scope(|s| {

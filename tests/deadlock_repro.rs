@@ -8,7 +8,7 @@ fn test_mixed_read_write_deadlock_repro() {
     let num_readers = 4;
     let ratio = 20;
     // Use enough iterations to trigger the race, but not take forever
-    let iters = 50_000; 
+    let iters = 50_000;
     let write_iters = (iters * num_readers as u64) / ratio as u64;
 
     let (tx, rx) = std::sync::mpsc::channel();
@@ -23,7 +23,7 @@ fn test_mixed_read_write_deadlock_repro() {
                     }
                 });
             }
-            
+
             for _ in 0..num_readers {
                 let r = reader.clone();
                 s.spawn(move || {
