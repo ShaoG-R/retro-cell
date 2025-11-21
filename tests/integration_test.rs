@@ -82,9 +82,11 @@ fn test_cow_update() {
     // guard1 is held, so reader_count > 0. Update should trigger Congested.
     match writer.write() {
         WriteOutcome::Congested(w) => {
-             w.perform_cow(|val| *val = 201);
+            w.perform_cow(|val| *val = 201);
         }
-        WriteOutcome::InPlace(_) => panic!("Should be Congested (COW) update when readers are active"),
+        WriteOutcome::InPlace(_) => {
+            panic!("Should be Congested (COW) update when readers are active")
+        }
     }
 
     let guard2 = match reader.read() {
@@ -114,7 +116,9 @@ fn test_blocked_reader() {
                 barrier_c.wait(); // Wait for main thread to try reading
                 thread::sleep(Duration::from_millis(100));
             }
-            WriteOutcome::Congested(_) => panic!("Writer should not be congested here (no readers)"),
+            WriteOutcome::Congested(_) => {
+                panic!("Writer should not be congested here (no readers)")
+            }
         }
     });
 
@@ -180,7 +184,7 @@ fn test_read_retro_during_cow() {
         ReadResult::Blocked(handler) => {
             // read_retro should return the *previous* valid node (Node A = 10)
             let old_guard = handler.read_retro().expect("Should have old value");
-            assert_eq!(*old_guard, 10); 
+            assert_eq!(*old_guard, 10);
 
             if let ReadResult::Success(new_g) = handler.wait() {
                 assert_eq!(*new_g, 30);

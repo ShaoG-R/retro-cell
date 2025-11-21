@@ -77,15 +77,13 @@ fn bench_single_thread_write(c: &mut Criterion) {
 
     group.bench_function("RetroCell", |b| {
         let (mut writer, _reader) = RetroCell::new(create_data());
-        b.iter(|| {
-            match writer.write() {
-                WriteOutcome::InPlace(mut g) => {
-                    g[0] = g[0].wrapping_add(1);
-                },
-                WriteOutcome::Congested(w) => {
-                    let mut g = w.force_in_place();
-                    g[0] = g[0].wrapping_add(1);
-                } 
+        b.iter(|| match writer.write() {
+            WriteOutcome::InPlace(mut g) => {
+                g[0] = g[0].wrapping_add(1);
+            }
+            WriteOutcome::Congested(w) => {
+                let mut g = w.force_in_place();
+                g[0] = g[0].wrapping_add(1);
             }
         })
     });
@@ -204,11 +202,11 @@ fn bench_mixed_ratio(c: &mut Criterion) {
                                     match w.write() {
                                         WriteOutcome::InPlace(mut g) => {
                                             g[0] = g[0].wrapping_add(1);
-                                        },
+                                        }
                                         WriteOutcome::Congested(w) => {
                                             let mut g = w.force_in_place();
                                             g[0] = g[0].wrapping_add(1);
-                                        } 
+                                        }
                                     }
                                 }
                             });
@@ -327,11 +325,11 @@ fn bench_multi_writer_multi_reader(c: &mut Criterion) {
                                 match w.lock().unwrap().write() {
                                     WriteOutcome::InPlace(mut g) => {
                                         g[0] = g[0].wrapping_add(1);
-                                    },
+                                    }
                                     WriteOutcome::Congested(w) => {
                                         let mut g = w.force_in_place();
                                         g[0] = g[0].wrapping_add(1);
-                                    } 
+                                    }
                                 };
                             }
                         });
