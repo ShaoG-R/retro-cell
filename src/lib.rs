@@ -262,34 +262,43 @@ impl<T> RetroCell<T> {
         let curr_val = self.shared.current.load(Ordering::Acquire);
         let curr_ptr = (curr_val & PTR_MASK) as *mut Node<T>;
         let curr_node = unsafe { &*curr_ptr };
+
+        // 预检查：如果已经有读者，直接跳过昂贵的 swap，走 COW
         let reader_cnt = curr_node.reader_count.load(Ordering::Acquire);
 
         // === Path A: In-Place ===
         if reader_cnt == 0 {
             let locked_val = curr_val | LOCKED;
-            if self
-                .shared
-                .current
-                .compare_exchange(curr_val, locked_val, Ordering::Acquire, Ordering::Relaxed)
-                .is_ok()
-            {
-                if curr_node.reader_count.load(Ordering::Acquire) == 0 {
-                    let result = unsafe { f(&mut *curr_node.data.get()) };
-                    self.shared
-                        .current
-                        .store(curr_val & PTR_MASK, Ordering::Release);
-                    // [Refactor] 使用封装的 notify
-                    self.shared.notifier.notify_all();
-                    return result;
-                } else {
-                    self.shared.current.store(curr_val, Ordering::Release);
-                    // [Refactor] 即使失败也要 notify，因为可能有 reader 等在锁上
-                    self.shared.notifier.notify_all();
-                }
+
+            // [优化] 使用 swap 替代 compare_exchange
+            // 1. 单一写者保证无需 compare。
+            // 2. Ordering::SeqCst 强制建立内存屏障，确保 swap (Store Lock) 先于后续的 reader_count load 执行。
+            //    避免 Store 和 Load 被 CPU 重排。
+            let _ = self.shared.current.swap(locked_val, Ordering::SeqCst);
+
+            // 再次检查：确保在加锁的时间窗口内没有新的 Reader 闯入
+            if curr_node.reader_count.load(Ordering::Acquire) == 0 {
+                let result = unsafe { f(&mut *curr_node.data.get()) };
+
+                // 解锁
+                self.shared
+                    .current
+                    .store(curr_val & PTR_MASK, Ordering::Release);
+
+                self.shared.notifier.notify_all();
+                return result;
+            } else {
+                // 失败：有 Reader 进来了
+                // 必须解锁 (恢复原状)
+                self.shared.current.store(curr_val, Ordering::Release);
+
+                // 必须 notify，因为可能有 Reader 看到 LOCKED 状态去休眠了，现在我们放弃加锁，需要唤醒它们重试
+                self.shared.notifier.notify_all();
             }
         }
 
         // === Path B: COW ===
+        // In-Place 失败或条件不满足，执行 Copy-On-Write
         let new_data = unsafe { (*curr_node.data.get()).clone() };
         let mut new_node = if let Some(recycled_node) = self.pool.pop() {
             unsafe { *recycled_node.data.get() = new_data };
