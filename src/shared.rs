@@ -1,7 +1,7 @@
+use crate::rt::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 use crate::sync::{Notifier, RefCount};
 use crate::utils::CachePadded;
 use std::cell::UnsafeCell;
-use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 
 // === Constants ===
 pub(crate) const TAG_MASK: usize = 0b1;

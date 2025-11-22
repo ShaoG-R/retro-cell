@@ -1,6 +1,5 @@
-use atomic_wait::{wait, wake_all, wake_one};
-use std::hint::spin_loop;
-use std::sync::atomic::{AtomicU32, Ordering};
+use crate::rt::hint::spin_loop;
+use crate::rt::sync::atomic::{AtomicU32, Ordering};
 
 // === RefCount (新实现: 针对节点生命周期的专用轻量级通知器) ===
 // 优化点：利用高位标记是否有 Writer 在等待，避免 Reader 无意义的 wake 系统调用。
@@ -80,7 +79,7 @@ impl RefCount {
             }
 
             // 确实需要睡眠，等待唤醒
-            wait(&self.state, val_now | WAITING_BIT);
+            crate::rt::wait(&self.state, val_now | WAITING_BIT);
         }
     }
 
@@ -92,9 +91,8 @@ impl RefCount {
 
     #[inline(always)]
     fn wake(&self) {
-        let ptr = &self.state as *const AtomicU32;
         // 只需要唤醒一个等待者（唯一的 Writer）
-        wake_one(ptr);
+        crate::rt::wake_one(&self.state);
     }
 
     #[inline(always)]
@@ -123,7 +121,7 @@ impl Notifier {
 
     #[inline(always)]
     pub fn wait_ticket(&self, expected: u32) {
-        wait(&self.inner, expected);
+        crate::rt::wait(&self.inner, expected);
     }
 
     #[inline(always)]
@@ -135,7 +133,6 @@ impl Notifier {
 
     #[inline(always)]
     fn wake_all(&self) {
-        let ptr = &self.inner as *const AtomicU32;
-        wake_all(ptr);
+        crate::rt::wake_all(&self.inner);
     }
 }

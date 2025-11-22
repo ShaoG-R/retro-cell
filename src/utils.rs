@@ -1,4 +1,4 @@
-use std::hint::spin_loop;
+use crate::rt::hint::spin_loop;
 use std::ops::Deref;
 
 // 简单的指数退避工具
@@ -15,7 +15,7 @@ impl Backoff {
         if self.step < 10 {
             spin_loop();
         } else {
-            std::thread::yield_now();
+            crate::rt::thread::yield_now();
         }
         // 饱和计数，防止溢出
         if self.step < 20 {

@@ -5,6 +5,11 @@ edition = "2024"
 
 [dependencies]
 atomic-wait = "1.1.0"
+loom = { version = "0.7", optional = true }
+
+[features]
+default = []
+loom = ["dep:loom"]
 
 [dev-dependencies]
 criterion = "0.7.0"

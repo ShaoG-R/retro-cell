@@ -1,8 +1,8 @@
-use crate::shared::{Node, SharedState, LOCKED, PTR_MASK, TAG_MASK};
+use crate::rt::sync::Arc;
+use crate::rt::sync::atomic::Ordering;
+use crate::shared::{LOCKED, Node, PTR_MASK, SharedState, TAG_MASK};
 use crate::utils::Backoff;
 use std::ops::Deref;
-use std::sync::atomic::Ordering;
-use std::sync::Arc;
 
 pub struct Ref<'a, T> {
     pub(crate) node: &'a Node<T>,

@@ -1,13 +1,13 @@
 use crate::reader::Reader;
-use crate::shared::{Node, SharedState, LOCKED, PTR_MASK};
+use crate::rt::sync::Arc;
+use crate::rt::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
+use crate::shared::{LOCKED, Node, PTR_MASK, SharedState};
 use crate::sync::Notifier;
 use crate::utils::CachePadded;
 use std::collections::VecDeque;
 use std::mem::align_of;
 use std::ops::{Deref, DerefMut};
 use std::ptr::{self};
-use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
-use std::sync::Arc;
 
 pub struct InPlaceGuard<'a, T> {
     pub(crate) cell: &'a mut RetroCell<T>,
