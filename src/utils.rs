@@ -1,7 +1,9 @@
 use crate::rt::hint::spin_loop;
 use std::ops::Deref;
 
-// 简单的指数退避工具
+/// Simple exponential backoff utility
+///
+/// 简单的指数退避工具
 pub(crate) struct Backoff {
     step: u32,
 }
@@ -17,13 +19,17 @@ impl Backoff {
         } else {
             crate::rt::thread::yield_now();
         }
-        // 饱和计数，防止溢出
+        // Saturating increment
+        // 饱和递增
         if self.step < 20 {
             self.step += 1;
         }
     }
 }
 
+/// Padding to avoid false sharing
+///
+/// 防止伪共享的填充
 #[repr(align(64))]
 pub(crate) struct CachePadded<T> {
     pub(crate) value: T,

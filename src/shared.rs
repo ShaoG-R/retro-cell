@@ -10,7 +10,7 @@ pub(crate) const LOCKED: usize = 0b1;
 
 pub(crate) struct Node<T> {
     pub(crate) data: UnsafeCell<T>,
-    // 使用新的 RefCount 替代 Notifier
+
     pub(crate) reader_count: CachePadded<RefCount>,
 }
 
@@ -26,12 +26,17 @@ impl<T> Node<T> {
     }
 }
 
-// 优化：将 current 与 notifier 隔离，防止 Writer 更新 current 时抖动 notifier 所在的缓存行
+/// Optimization: Separate 'current' and 'notifier' to prevent cache line thrashing
+///
+/// 优化：分离 'current' 和 'notifier' 以防止缓存行抖动
 pub(crate) struct SharedState<T> {
+    // Hot: Frequently accessed by both Writer and Reader
     // Hot: Writer 和 Reader 都会频繁访问
     pub(crate) current: CachePadded<AtomicUsize>,
+    // Warm: Accessed only when Blocked Reader and Writer compete
     // Warm: 只有 Blocked Reader 和 Writer 在竞争时访问
     pub(crate) notifier: CachePadded<Notifier>,
+    // Cold: Accessed only by Retro Reader and Writer
     // Cold: 只有 Retro Reader 和 Writer 访问
     pub(crate) previous: AtomicPtr<Node<T>>,
 }

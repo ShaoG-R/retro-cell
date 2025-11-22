@@ -9,6 +9,9 @@ use std::mem::align_of;
 use std::ops::{Deref, DerefMut};
 use std::ptr::{self};
 
+/// Guard for in-place writing
+///
+/// 原地写入的守卫
 pub struct InPlaceGuard<'a, T> {
     pub(crate) cell: &'a mut RetroCell<T>,
     pub(crate) locked_val: usize,
@@ -34,16 +37,19 @@ impl<'a, T> DerefMut for InPlaceGuard<'a, T> {
 impl<'a, T> Drop for InPlaceGuard<'a, T> {
     #[inline]
     fn drop(&mut self) {
-        // 解锁
         self.cell
             .shared
             .current
             .store(self.locked_val & PTR_MASK, Ordering::Release);
-        // 唤醒被锁挡住的 Reader
+        // Wake up readers blocked by the lock
+        // 唤醒被锁阻塞的读者
         self.cell.shared.notifier.advance_and_wake();
     }
 }
 
+/// Writer that handles congestion
+///
+/// 处理拥塞的写入者
 pub struct CongestedWriter<'a, T> {
     pub(crate) cell: &'a mut RetroCell<T>,
 }
@@ -55,14 +61,15 @@ impl<'a, T> CongestedWriter<'a, T> {
         let curr_val = shared.current.load(Ordering::Acquire);
         let locked_val = curr_val | LOCKED;
 
-        // 强制加锁
+        // Forcefully acquire the lock
+        // 强制获取锁
         shared.current.swap(locked_val, Ordering::AcqRel);
 
-        // 等待读者排空
+        // Wait for active readers to drain
+        // 等待活跃读者排空
         let curr_ptr = (curr_val & PTR_MASK) as *mut Node<T>;
         let curr_node = unsafe { &*curr_ptr };
 
-        // 这里会使用新的 RefCount wait 逻辑，只有这里会设置 WAITING 位
         curr_node.reader_count.wait_until_zero();
 
         InPlaceGuard {
@@ -84,7 +91,8 @@ impl<'a, T> CongestedWriter<'a, T> {
 
         let mut new_node = if let Some(recycled_node) = self.cell.pool.pop() {
             unsafe { *recycled_node.data.get() = new_data };
-            // 复用时必须重置 RefCount
+            // Reset RefCount for reuse
+            // 重置 RefCount 以复用
             recycled_node.reader_count.reset();
             recycled_node
         } else {
@@ -104,18 +112,25 @@ impl<'a, T> CongestedWriter<'a, T> {
         self.cell.garbage.push_back(old_ptr);
         self.cell.shared.previous.store(old_ptr, Ordering::Release);
 
-        // COW 完成，唤醒可能被旧锁（如果有的话）或并发操作阻塞的读者
+        // COW complete. Wake up blocked readers
+        // COW 完成。唤醒阻塞的读者
         self.cell.shared.notifier.advance_and_wake();
 
         result
     }
 }
 
+/// Outcome of a write attempt
+///
+/// 写入尝试的结果
 pub enum WriteOutcome<'a, T> {
     InPlace(InPlaceGuard<'a, T>),
     Congested(CongestedWriter<'a, T>),
 }
 
+/// A concurrent cell that supports retro-reading
+///
+/// 支持回溯读取的并发单元
 pub struct RetroCell<T> {
     pub(crate) shared: Arc<SharedState<T>>,
     pub(crate) garbage: VecDeque<*mut Node<T>>,
@@ -125,6 +140,9 @@ pub struct RetroCell<T> {
 unsafe impl<T: Send + Sync> Send for RetroCell<T> {}
 
 impl<T> RetroCell<T> {
+    /// Create a new RetroCell
+    ///
+    /// 创建一个新的 RetroCell
     pub fn new(initial: T) -> (Self, Reader<T>)
     where
         T: Clone,
@@ -155,11 +173,11 @@ impl<T> RetroCell<T> {
 
     #[inline]
     fn collect_garbage(&mut self) {
-        // 垃圾回收逻辑保持不变
         while self.garbage.len() > 1 {
             if let Some(&ptr) = self.garbage.front() {
                 let node = unsafe { &*ptr };
-                // RefCount::count 已经屏蔽了 WAITING 位，直接用即可
+                // RefCount::count masks the WAITING bit
+                // RefCount::count 已屏蔽 WAITING 位
                 if node.reader_count.count() == 0 {
                     self.garbage.pop_front();
                     let node_box = unsafe { Box::from_raw(ptr) };
@@ -171,6 +189,9 @@ impl<T> RetroCell<T> {
         }
     }
 
+    /// Try to write to the cell
+    ///
+    /// 尝试写入单元
     pub fn try_write(&mut self) -> WriteOutcome<'_, T> {
         self.collect_garbage();
 
@@ -181,7 +202,8 @@ impl<T> RetroCell<T> {
         if curr_node.reader_count.count() == 0 {
             let locked_val = curr_val | LOCKED;
 
-            // 优化：使用 AcqRel 代替 SeqCst，在 ARM 上性能更好
+            // Optimization: AcqRel performs better on ARM
+            // 优化：AcqRel 在 ARM 上性能更佳
             let _ = self.shared.current.swap(locked_val, Ordering::AcqRel);
 
             if curr_node.reader_count.count() == 0 {
@@ -190,7 +212,8 @@ impl<T> RetroCell<T> {
                     locked_val: locked_val,
                 });
             } else {
-                // 失败回滚
+                // Rollback lock on failure
+                // 失败时回滚锁
                 self.shared.current.store(curr_val, Ordering::Release);
                 self.shared.notifier.advance_and_wake();
             }
@@ -199,6 +222,8 @@ impl<T> RetroCell<T> {
         WriteOutcome::Congested(CongestedWriter { cell: self })
     }
 
+    /// Perform COW update directly
+    ///
     /// 直接执行 COW 更新
     pub fn write_cow<F, R>(&mut self, f: F) -> R
     where
@@ -209,6 +234,8 @@ impl<T> RetroCell<T> {
         CongestedWriter { cell: self }.perform_cow(f)
     }
 
+    /// Write in-place after locking the latest data (block until locked)
+    ///
     /// 锁定最新数据后写入（阻塞直到锁定）
     pub fn write_in_place(&mut self) -> InPlaceGuard<'_, T> {
         self.collect_garbage();
