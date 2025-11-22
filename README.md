@@ -88,6 +88,34 @@ match reader.try_read() {
 }
 ```
 
+## Performance
+
+Benchmarks run on an Windows (Intel Core i9-13900KS).
+
+### Comparison vs ArcSwap (Read-Heavy / COW)
+*Testing Non-Blocking Write (COW) + Non-Blocking Read*
+
+| Scenario | RetroCell (ns) | ArcSwap (ns) | Speedup |
+|----------|---------------:|-------------:|:-------:|
+| 1W / 1R  |             88 |          558 |  ~6.3x  |
+| 1W / 4R  |            168 |          558 |  ~3.3x  |
+| 2W / 2R  |            240 |        1,043 |  ~4.3x  |
+| 4W / 4R  |            574 |        2,046 |  ~3.5x  |
+
+> **Result**: RetroCell is significantly faster than `ArcSwap` for RCU-like workloads, especially under contention.
+
+### Comparison vs RwLock (Blocking)
+*Testing Blocking Write (In-Place) + Blocking Read*
+
+| Scenario | RetroCell (ns) | RwLock (ns) | Speedup |
+|----------|---------------:|------------:|:-------:|
+| 1W / 1R  |            104 |          53 |  ~0.5x  |
+| 1W / 4R  |            305 |         187 |  ~0.6x  |
+| 2W / 2R  |            259 |         213 |  ~0.8x  |
+| 4W / 4R  |            582 |         523 |  ~0.9x  |
+
+> **Result**: For purely blocking, in-place updates, standard `RwLock` is faster due to simpler logic. RetroCell's strength lies in its hybrid capabilities (falling back to COW to avoid blocking).
+
 ## License
 
 This project is licensed under either of
