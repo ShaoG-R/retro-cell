@@ -4,7 +4,7 @@
 
 [![Crates.io](https://img.shields.io/crates/v/retro-cell.svg)](https://crates.io/crates/retro-cell)
 [![Docs.rs](https://docs.rs/retro-cell/badge.svg)](https://docs.rs/retro-cell)
-[![License](https://img.shields.io/crates/l/smr-swap)](LICENSE-MIT)
+[![License](https://img.shields.io/crates/l/retro-cell)](LICENSE-MIT)
 
 ## 特性
 
