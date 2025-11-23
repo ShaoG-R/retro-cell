@@ -106,10 +106,10 @@ Benchmarks run on an Windows (Intel Core i9-13900KS).
 
 | Scenario | RetroCell (ns) | ArcSwap (ns) | Speedup |
 |----------|---------------:|-------------:|:-------:|
-| 1W / 1R  |             88 |          558 |  ~6.3x  |
-| 1W / 4R  |            168 |          558 |  ~3.3x  |
-| 2W / 2R  |            240 |        1,043 |  ~4.3x  |
-| 4W / 4R  |            574 |        2,046 |  ~3.5x  |
+| 1W / 1R  |            100 |          204 |  ~2.0x  |
+| 1W / 4R  |            166 |          325 |  ~2.0x  |
+| 2W / 2R  |            257 |          753 |  ~2.9x  |
+| 4W / 4R  |            610 |        1,956 |  ~3.2x  |
 
 > **Result**: RetroCell is significantly faster than `ArcSwap` for RCU-like workloads, especially under contention.
 
