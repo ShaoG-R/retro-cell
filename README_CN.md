@@ -13,6 +13,13 @@
 - **无锁读取**：`try_read` 允许非阻塞地尝试访问数据。
 - **阻塞读取**：`read` 确保访问到最新数据，必要时会进行阻塞。
 
+## SWMR (单写多读)
+
+`RetroCell` 被设计为 **单写多读 (Single-Writer Multi-Reader, SWMR)** 数据结构。
+
+- 如果你需要 **多写入者 (Multiple Writers)**，必须使用同步原语（如 `Arc<Mutex<RetroCell<T>>>`）来包装 `RetroCell`（或写入句柄）。
+- 读取者 (`Reader<T>`) 实现了 `Clone` 和 `Send`/`Sync`，因此可以在线程间自由共享。
+
 ## 安装
 
 在 `Cargo.toml` 中添加：

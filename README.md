@@ -13,6 +13,13 @@ A concurrent data structure that allows lock-free reads and supports retroactive
 - **Lock-Free Reads**: `try_read` allows non-blocking attempts to access data.
 - **Blocking Reads**: `read` ensures the latest data is accessed, blocking if necessary.
 
+## SWMR (Single-Writer Multi-Reader)
+
+`RetroCell` is designed as a **Single-Writer Multi-Reader (SWMR)** data structure. 
+
+- If you need **Multiple Writers**, you must wrap the `RetroCell` (or the writer handle) in a synchronization primitive like `Arc<Mutex<RetroCell<T>>>`.
+- The readers (`Reader<T>`) are `Clone` and `Send`/`Sync`, so they can be freely shared across threads.
+
 ## Installation
 
 Add this to your `Cargo.toml`:
