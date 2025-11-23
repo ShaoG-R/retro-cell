@@ -143,10 +143,7 @@ impl<T> RetroCell<T> {
     /// Create a new RetroCell
     ///
     /// 创建一个新的 RetroCell
-    pub fn new(initial: T) -> (Self, Reader<T>)
-    where
-        T: Clone,
-    {
+    pub fn new(initial: T) -> (Self, Reader<T>) {
         assert!(align_of::<Node<T>>() >= 2);
         let node = Box::new(Node::new(initial));
         let ptr = Box::into_raw(node);
@@ -225,6 +222,7 @@ impl<T> RetroCell<T> {
     /// Perform COW update directly
     ///
     /// 直接执行 COW 更新
+    #[inline]
     pub fn write_cow<F, R>(&mut self, f: F) -> R
     where
         T: Clone,
@@ -237,6 +235,7 @@ impl<T> RetroCell<T> {
     /// Write in-place after locking the latest data (block until locked)
     ///
     /// 锁定最新数据后写入（阻塞直到锁定）
+    #[inline]
     pub fn write_in_place(&mut self) -> InPlaceGuard<'_, T> {
         self.collect_garbage();
         CongestedWriter { cell: self }.force_in_place()

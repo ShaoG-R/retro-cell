@@ -28,7 +28,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-retro-cell = "0.1.0"
+retro-cell = "0.1"
 ```
 
 ## Usage

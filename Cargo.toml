@@ -1,6 +1,6 @@
 [package]
 name = "retro-cell"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 authors = ["ShaoG <shaog.rs@gmail.com>"]
 description = "A concurrent single-writer multi-reader (SWMR) data structure that allows lock-free reads and supports retroactive (historical) access."

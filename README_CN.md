@@ -26,7 +26,7 @@
 
 ```toml
 [dependencies]
-retro-cell = "0.1.0"
+retro-cell = "0.1"
 ```
 
 ## 使用指南
