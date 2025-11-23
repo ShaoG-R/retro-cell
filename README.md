@@ -6,6 +6,8 @@ A concurrent data structure that allows lock-free reads and supports retroactive
 [![Docs.rs](https://docs.rs/retro-cell/badge.svg)](https://docs.rs/retro-cell)
 [![License](https://img.shields.io/crates/l/smr-swap)](LICENSE-MIT)
 
+[中文文档](./README_CN.md)
+
 ## Features
 
 - **Retroactive Reading**: Readers can access the previous version of the data while a writer is updating it, avoiding blocks.
