@@ -90,7 +90,7 @@ match reader.try_read() {
 
 ## 性能表现
 
-基准测试运行于 Windows 平台 (Intel/AMD)。
+基准测试运行于 Windows 平台 (Intel Core i9-13900KS)。
 
 ### 对比 ArcSwap (读多写少 / COW)
 *测试场景：非阻塞写入 (COW) + 非阻塞读取*

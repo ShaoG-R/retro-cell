@@ -2,6 +2,14 @@
 name = "retro-cell"
 version = "0.1.0"
 edition = "2024"
+authors = ["ShaoG <shaog.rs@gmail.com>"]
+description = "A concurrent data structure that allows lock-free reads and supports retroactive (historical) access."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/ShaoG-R/retro-cell"
+homepage = "https://github.com/ShaoG-R/retro-cell"
+documentation = "https://docs.rs/retro-cell"
+keywords = ["concurrent", "lock-free", "retroactive", "data-structure"]
+categories = ["concurrency", "data-structures"]
 
 [dependencies]
 atomic-wait = "1.1.0"
